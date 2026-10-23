@@ -2071,8 +2071,8 @@
   "input_label": "moot",
   "perturbation_tested": "yes",
   "perturbation_label": "moot-after-edit",
-  "divergence_on_input": 0.2083,
-  "divergence_after_edit": 0.2083,
+  "divergence_on_input": 0.0,
+  "divergence_after_edit": 0.0,
   "reviewer_votes": 2
  },
  {
@@ -2095,7 +2095,7 @@
   "input_label": "moot",
   "perturbation_tested": "yes",
   "perturbation_label": "latent",
-  "divergence_on_input": 0.2083,
+  "divergence_on_input": 0.0,
   "divergence_after_edit": 1.0,
   "reviewer_votes": 3
  },
@@ -2131,8 +2131,8 @@
   "input_label": "consequential",
   "perturbation_tested": "yes",
   "perturbation_label": "na",
-  "divergence_on_input": 0.2083,
-  "divergence_after_edit": 0.2095,
+  "divergence_on_input": 0.0003,
+  "divergence_after_edit": 0.0015,
   "reviewer_votes": ""
  },
  {

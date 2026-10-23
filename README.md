@@ -22,12 +22,12 @@ PrepBench commit used: `993a3139da932e144d588f7b775d092827fc89c8` (2026-07-14).
 
 `case`, `annotation_id`, `kind`, `decision`; `input_label` ∈ {`consequential`, `moot`, `unresolved`};
 `perturbation_tested` (whether this annotation was in the perturbation study); `perturbation_label`
-∈ {`latent`, `moot-after-edit`, `na`}; `divergence_on_input`, `divergence_after_edit` (fraction of
-output cells the two readings differ in, under the benchmark comparator); `reviewer_votes`
+∈ {`latent`, `moot-after-edit`, `na`}; `divergence_on_input`, `divergence_after_edit` (mean per-table
+cell disagreement after canonical row sorting and numeric tolerance; paired missing cells agree); `reviewer_votes`
 (how many of three LLM reviewers accepted the perturbation item, for moot items only).
 
 Annotations with `input_label = consequential` and `perturbation_tested = yes` are the
-perturbation study's controls.
+perturbation study's controls. Pass/fail labels use PrepBench's official key-based comparator.
 
 Notes on the two `divergence_*` columns:
 * They are measured for the **single alternative the perturbation study used** (the first
@@ -37,9 +37,9 @@ Notes on the two `divergence_*` columns:
   `divergence_on_input = 0.0` here (the perturbation study happened to use a non-differing
   alternative) — e.g. `case_200 / 1_O2_filename_timestamp_parse_format`. This is provenance, not
   an error.
-* Only the **40** sampled moot annotations and **12** controls that produced a runnable
-  perturbation appear with `perturbation_tested = yes`; `labels.csv` contains the **29** moot and
-  **9** control rows that ran. The other 11 moot samples are omitted: 6 admitted no realistic
+* Of **40** sampled moot annotations and **12** controls, the **29** moot and **9** control rows
+  with runnable perturbations have `perturbation_tested = yes`. The other 11 moot samples
+  have no perturbation result: 6 admitted no realistic
   edit and 5 failed to run or exceeded the three-row limit.
 
 ## Reproduce
@@ -55,10 +55,14 @@ and the latent share among sampled moot annotations.
 
 `label_ambiguities.py` is a reference implementation to read alongside the paper. It needs a
 PrepBench checkout (per-case `inputs/`, `query.md`, `amb_kb.json`, reference solutions, and gold
-tables) and two OpenAI-compatible endpoints, configured through environment variables
+tables and comparator configuration), its `src/` directory on `PYTHONPATH`, and two
+OpenAI-compatible endpoints configured through environment variables
 (`GEN_BASE_URL`/`GEN_MODEL`/`GEN_API_KEY`, `JUDGE_BASE_URL`/`JUDGE_MODEL`/`JUDGE_API_KEY`). No
 API keys are stored in this release. The generation, judging, and perturbation prompts are
 included verbatim in the script.
+
+The function returns `label` and `perturbation_label` separately; `latent` and `moot-after-edit`
+require a valid executed edit. Both `solve()` and `solve(inputs_dir)` are supported.
 
 It sandboxes candidate programs with macOS `sandbox-exec` (see the `SANDBOX` constant); on Linux
 or Windows, replace that call with another sandbox (e.g. `firejail`, a container, or `nsjail`).

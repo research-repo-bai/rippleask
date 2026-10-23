@@ -22,6 +22,7 @@ import re
 import shutil
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 import pandas as pd
@@ -64,16 +65,20 @@ def json_block(text: str) -> dict | None:
 
 # ----------------------------------------------------------------- execution + comparator
 def run_solve(code: str, inputs_dir: Path, out_dir: Path) -> bool:
-    """Run a solve(inputs_dir)->dict[str,DataFrame] program in a network-denied subprocess."""
+    """Run a legacy zero-argument or solve(inputs_dir) program with the shared adapter."""
     inputs_dir, out_dir = Path(inputs_dir).resolve(), Path(out_dir).resolve()
     if out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True)
     (out_dir / "solution.py").write_text(code, encoding="utf-8")
     (out_dir / "driver.py").write_text(
-        "import sys;from pathlib import Path\n"
-        "g={'__name__':'s'};exec(compile(Path(sys.argv[1]).read_text(),'s','exec'),g)\n"
-        "r=g['solve'](Path(sys.argv[2]));o=Path(sys.argv[3])\n"
+        "import inspect,sys;from pathlib import Path\n"
+        "inputs=Path(sys.argv[2]);o=Path(sys.argv[3])\n"
+        "g={'__name__':'solution','__file__':str(inputs.parent/'solution.py')}\n"
+        "exec(compile(Path(sys.argv[1]).read_text(),'s','exec'),g)\n"
+        "solve=g['solve'];required=[p for p in inspect.signature(solve).parameters.values() "
+        "if p.default is inspect.Parameter.empty and p.kind in (p.POSITIONAL_ONLY,p.POSITIONAL_OR_KEYWORD)]\n"
+        "r=solve() if not required else solve(inputs)\n"
         "[df.to_csv(o/Path(n).name,index=False) for n,df in r.items()]\n", encoding="utf-8")
     try:
         proc = subprocess.run(["sandbox-exec", "-p", SANDBOX, PY, "driver.py", "solution.py",
@@ -85,8 +90,12 @@ def run_solve(code: str, inputs_dir: Path, out_dir: Path) -> bool:
 
 
 def cell_diff(a_dir: Path, b_dir: Path) -> float:
-    """Fraction of output cells that differ under the benchmark comparator (2% relative tolerance,
-    absolute 0.02 when either side is 0; row order and column order ignored). 1.0 if shapes differ."""
+    """Mean per-table cell disagreement after canonical row sorting and numeric tolerance.
+
+    This auxiliary score uses different row alignment from the official comparator.
+    Paired missing cells agree; a missing cell paired with a value disagrees.
+    A missing or differently shaped table contributes 1.0.
+    """
     names = {p.name for p in a_dir.glob("*.csv")} | {p.name for p in b_dir.glob("*.csv")}
     scores = []
     for n in sorted(names):
@@ -116,13 +125,52 @@ def cell_diff(a_dir: Path, b_dir: Path) -> float:
             for x, y in zip(row_a, row_b):
                 total += 1
                 nx, ny = num(x), num(y)
-                if nx is not None and ny is not None:
+                if pd.isna(x) or pd.isna(y):
+                    same = bool(pd.isna(x) and pd.isna(y))
+                elif nx is not None and ny is not None:
                     same = abs(nx - ny) < 0.02 if (nx == 0 or ny == 0) else abs(nx - ny) / max(abs(nx), abs(ny)) < TOL
                 else:
                     same = ("" if x != x else str(x).strip()) == ("" if y != y else str(y).strip())
                 diff += not same
         scores.append(diff / max(total, 1))
     return sum(scores) / len(scores) if scores else 0.0
+
+
+def official_equal(expected: Path, candidate: Path, config: Path) -> bool:
+    """Use PrepBench's key-based comparator; put its src/ directory on PYTHONPATH."""
+    from evaluate.core import evaluate
+    passed, error = evaluate(str(expected), str(candidate), str(config))
+    if error and error["error_type"] in {"CONFIG_MISSING", "EXCEPTION", "READ_ERROR"}:
+        raise RuntimeError(f"Official comparison could not be completed: {error}")
+    return passed
+
+
+def valid_edit(original: Path, edited: Path) -> bool:
+    """Require matching files/parsed columns and 1--3 changed rows per affected file."""
+    files = {p.name for p in original.glob("*.csv")}
+    if files != {p.name for p in edited.glob("*.csv")}:
+        return False
+    total = 0
+    for name in sorted(files):
+        before = (original / name).read_text(encoding="utf-8").splitlines()
+        after = (edited / name).read_text(encoding="utf-8").splitlines()
+        if not before or not after:
+            return False
+        # Compare the schema used by the CSV parser, permitting equivalent BOM
+        # and empty-header serialization while rejecting renamed/added columns.
+        try:
+            original_columns = list(pd.read_csv(original / name, nrows=0).columns)
+            edited_columns = list(pd.read_csv(edited / name, nrows=0).columns)
+        except (OSError, UnicodeError, pd.errors.ParserError, pd.errors.EmptyDataError):
+            return False
+        if original_columns != edited_columns:
+            return False
+        a, b = Counter(before[1:]), Counter(after[1:])
+        changed = max(sum((a - b).values()), sum((b - a).values()))
+        if changed > 3:
+            return False
+        total += changed
+    return total > 0
 
 
 # ----------------------------------------------------------------- prompts (verbatim, as used in the paper)
@@ -166,8 +214,14 @@ which reads every CSV in src_dir, applies the change, and writes ALL files (chan
 
 
 def label_annotation(case_dir: Path, gold_dir: Path, reference_code: str, annotation: dict, work: Path) -> dict:
-    """Algorithm 1 for one annotation. Returns its label and the evidence behind it."""
+    """Return the original-input label and a separate perturbation_label (Algorithm 1)."""
     inputs = case_dir / "inputs"
+    config = gold_dir / "config.json"
+    if not config.is_file():
+        raise FileNotFoundError(f"Official comparator configuration required: {config}")
+    reference_out = work / "reference_original"
+    if not run_solve(reference_code, inputs, reference_out) or not official_equal(gold_dir, reference_out, config):
+        return {"label": "unresolved", "note": "reference program does not pass on the original input"}
     request = (case_dir / "query.md").read_text(encoding="utf-8")
     entry = "\n".join(f"{k}: {annotation[k]}" for k in ("id", "kind", "op") if annotation.get(k)) \
         + f"\nrequest text: {annotation.get('source_text') or annotation.get('intent')}\nreference code:\n{annotation['ref']}"
@@ -188,7 +242,7 @@ def label_annotation(case_dir: Path, gold_dir: Path, reference_code: str, annota
 
     if not valid:
         return {"label": "unresolved"}
-    if any(cell_diff(gold_dir, a["out"]) > 0 for a in valid):   # some reading disagrees with gold on this input
+    if any(not official_equal(gold_dir, a["out"], config) for a in valid):
         return {"label": "consequential"}
 
     # moot on this input: try a minimal realistic edit that could separate a reading from the reference
@@ -198,8 +252,10 @@ def label_annotation(case_dir: Path, gold_dir: Path, reference_code: str, annota
     pr = ask("GEN", PERT_SYS, f"# Request\n{request}\n\n# Inputs\n" + "\n".join(prev)
              + f"\n\n# Reference\n```python\n{reference_code}\n```\n\n# Alternative\n```python\n{alt['code']}\n```")
     code = code_block(pr)
-    if "NO_REALISTIC_CHANGE" in pr or not code:
-        return {"label": "moot-after-edit", "note": "no realistic edit found"}
+    if "NO_REALISTIC_CHANGE" in pr:
+        return {"label": "moot", "perturbation_label": "no-edit-found"}
+    if not code:
+        return {"label": "moot", "perturbation_label": "unresolved", "note": "no perturbation program returned"}
     pert_in = work / "perturbed" / "inputs"
     pert_in.mkdir(parents=True, exist_ok=True)
     (work / "perturb.py").write_text(code, encoding="utf-8")
@@ -207,15 +263,22 @@ def label_annotation(case_dir: Path, gold_dir: Path, reference_code: str, annota
         "import sys;from pathlib import Path\n"
         "g={'__name__':'p'};exec(compile(Path(sys.argv[1]).read_text(),'p','exec'),g)\n"
         "g['perturb'](Path(sys.argv[2]),Path(sys.argv[3]))\n", encoding="utf-8")
-    if subprocess.run(["sandbox-exec", "-p", SANDBOX, PY, "pdriver.py", "perturb.py", str(inputs), str(pert_in)],
-                      cwd=work, capture_output=True, text=True, timeout=EXEC_TIMEOUT).returncode != 0:
-        return {"label": "moot-after-edit", "note": "perturbation failed to run"}
+    try:
+        result = subprocess.run(["sandbox-exec", "-p", SANDBOX, PY, "pdriver.py", "perturb.py", str(inputs), str(pert_in)],
+                                cwd=work, capture_output=True, text=True, timeout=EXEC_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return {"label": "moot", "perturbation_label": "unresolved", "note": "perturbation timed out"}
+    if result.returncode != 0 or not valid_edit(inputs, pert_in):
+        return {"label": "moot", "perturbation_label": "unresolved", "note": "perturbation failed or violated the edit limit"}
     ok_r = run_solve(reference_code, pert_in, work / "ref_p")
     ok_a = run_solve(alt["code"], pert_in, work / "alt_p")
-    before = cell_diff(gold_dir, alt["out"])
-    after = cell_diff(work / "ref_p", work / "alt_p") if (ok_r and ok_a) else 0.0
-    return {"label": "latent" if after > before else "moot-after-edit",
-            "divergence_after_edit": round(after, 4)}
+    if not (ok_r and ok_a):
+        return {"label": "moot", "perturbation_label": "unresolved", "note": "a program failed on the edited input"}
+    before = cell_diff(reference_out, alt["out"])
+    after = cell_diff(work / "ref_p", work / "alt_p")
+    latent = after > before and not official_equal(work / "ref_p", work / "alt_p", config)
+    return {"label": "moot", "perturbation_label": "latent" if latent else "moot-after-edit",
+            "divergence_on_input": round(before, 4), "divergence_after_edit": round(after, 4)}
 
 
 if __name__ == "__main__":

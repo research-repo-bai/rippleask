@@ -171,12 +171,12 @@ case_290,5_O1_source_row_skip_first_nonmatch,Operation boundary,Add in a row num
 case_290,6_O2_matchday_carry_forward,Operation incomplete,Create a column to show which Matchday (ie which game in the 38 game season) each game occurred in,consequential,no,na,,,
 case_290,7_O2_source_row_shared_per_physical_row,Operation incomplete,Add in a row number as at source,consequential,no,na,,,
 case_297,1_C1_group_total_score_null,Row-level concept,Set Total Score to null for group-dance rows.,consequential,no,na,,,
-case_297,2_O3_final_row_dedup_keep_first,Operation inconsistent,"After all transformations, remove exact duplicate output rows keeping the first occurrence.",moot,yes,moot-after-edit,0.2083,0.2083,2
+case_297,2_O3_final_row_dedup_keep_first,Operation inconsistent,"After all transformations, remove exact duplicate output rows keeping the first occurrence.",moot,yes,moot-after-edit,0.0,0.0,2
 case_297,3_C1_header_row_filter,Row-level concept,Remove repeated table headers from the dataset,consequential,no,na,,,
-case_297,4_O2_music_missing_keep_row,Operation incomplete,Split the Music field into separate rows for each song,moot,yes,latent,0.2083,1.0,3
+case_297,4_O2_music_missing_keep_row,Operation incomplete,Split the Music field into separate rows for each song,moot,yes,latent,0.0,1.0,3
 case_297,5_O2_scores_missing_placeholder_null,Operation incomplete,Split the Score field into Total Score and Judges Scores,consequential,no,na,,,
 case_297,6_C1_theme_detail_concat_fields,Row-level concept,Combine the Film and Musical fields into one (max 1 theme per week),consequential,no,na,,,
-case_297,7_O2_week_theme_from_colon_else_null,Row-level concept,Split the Week field into a numeric value and extra details into Theme Week,consequential,yes,na,0.2083,0.2095,
+case_297,7_O2_week_theme_from_colon_else_null,Row-level concept,Split the Week field into a numeric value and extra details into Theme Week,consequential,yes,na,0.0003,0.0015,
 case_303,1_C2_zscore_sample_std,Group-level concept,o=Standard Deviation of Ranking Field within sport,consequential,no,na,,,
 case_303,2_O2_zscore_zero_std_defaults,Operation boundary,"If within-sport standard deviation is 0, set z-scores to 0 for that sport.",moot,no,na,,,
 case_303,3_C2_conf_record_wins_component,Single-table reference,The Conference Record Field is structured Wins-Losses,unresolved,no,na,,,
